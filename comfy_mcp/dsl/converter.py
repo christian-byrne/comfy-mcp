@@ -323,3 +323,65 @@ def full_workflow_to_simplified(workflow: dict[str, Any]) -> dict[str, Any]:
         }
 
     return simplified
+
+
+def is_full_workflow_format(data: dict[str, Any]) -> bool:
+    """Check if data is in full ComfyUI workflow format.
+    
+    Full format has 'workflow' key containing the actual nodes.
+    Simplified format has node IDs as top-level keys.
+    """
+    if not isinstance(data, dict):
+        return False
+    
+    # Full format indicators
+    if "workflow" in data and isinstance(data["workflow"], dict):
+        return True
+        
+    # If we have "nodes" or "links" at top level, it's likely full format
+    if "nodes" in data or "links" in data:
+        return True
+        
+    return False
+
+
+def full_workflow_to_simplified(full_data: dict[str, Any]) -> dict[str, Any]:
+    """Convert full ComfyUI workflow format to simplified API format.
+    
+    Args:
+        full_data: Full workflow format with 'workflow', 'extra', etc.
+        
+    Returns:
+        Simplified format with node IDs as keys
+    """
+    if not is_full_workflow_format(full_data):
+        return full_data
+        
+    # Extract the workflow part
+    if "workflow" in full_data:
+        return full_data["workflow"]
+    
+    # If it has nodes/links at top level, convert from node list format
+    if "nodes" in full_data:
+        nodes = full_data["nodes"]
+        links = full_data.get("links", [])
+        
+        # Build link mapping
+        link_map = {}
+        for link in links:
+            link_id = link[0]
+            source_node_id = link[1]
+            source_slot = link[2]
+            target_node_id = link[3]
+            target_slot = link[4]
+            
+            link_map[link_id] = {
+                "source_node_id": source_node_id,
+                "source_slot": source_slot,
+                "target_node_id": target_node_id,
+                "target_slot": target_slot,
+            }
+        
+        return convert_nodes_format_to_simplified(nodes, link_map)
+    
+    return full_data

@@ -41,8 +41,12 @@ async def read_workflow_direct(ctx, filepath: str) -> str:
             except json.JSONDecodeError as e:
                 raise ToolError(f"Invalid JSON in {filepath}: {e}")
         
-        await ctx.info(f"Read DSL file ({len(content)} characters)")
-        return content
+        elif file_path.suffix.lower() == ".dsl":
+            await ctx.info(f"Read DSL file ({len(content)} characters)")
+            return content
+        
+        else:
+            raise ToolError(f"Unsupported file format: {file_path.suffix}")
         
     except Exception as e:
         raise ToolError(f"Failed to read workflow: {e}")

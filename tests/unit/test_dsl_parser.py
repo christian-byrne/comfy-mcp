@@ -24,7 +24,7 @@ class TestDSLParser:
     def test_parse_node_with_properties(self, dsl_parser: DSLParser):
         """Test parsing a node with various property types."""
         dsl = '''## Test
-        
+
 node1: NodeType
   text_prop: hello world
   int_prop: 42
@@ -53,7 +53,7 @@ node1: NodeType
     def test_parse_connections(self, dsl_parser: DSLParser):
         """Test parsing connections between nodes."""
         dsl = '''## Test
-        
+
 input_node: InputType
   param: value
 
@@ -86,7 +86,7 @@ output_node: OutputType
     def test_parse_invalid_syntax(self, dsl_parser: DSLParser):
         """Test parsing invalid DSL syntax."""
         invalid_dsl = '''## Test
-        
+
 invalid syntax here
 not a valid node definition
 '''
@@ -108,7 +108,7 @@ not a valid node definition
     def test_node_string_representation(self, dsl_parser: DSLParser):
         """Test node string representation."""
         dsl = '''## Test
-        
+
 test_node: TestType
   param1: value1
   param2: 42
