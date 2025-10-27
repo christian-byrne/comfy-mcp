@@ -23,10 +23,12 @@ Key Features:
     - File operations (read/write/list)
     - Workflow validation and analysis
     - Real-time execution monitoring
+    - Pre-built workflow templates
 
 Modules:
     dsl: Domain Specific Language parser and converter
     mcp: Model Context Protocol server implementation
+    templates: Pre-built workflow templates with parameter substitution
 """
 
 __version__ = "0.1.0"
@@ -35,11 +37,14 @@ __email__ = ""
 __license__ = "MIT"
 
 from .dsl import DSLParser, DslToJsonConverter, JsonToDslConverter
+from .templates import TemplateManager, TEMPLATES
 from .mcp.server import DEFAULT_COMFYUI_SERVER
 
 __all__ = [
     "DSLParser",
     "DslToJsonConverter", 
     "JsonToDslConverter",
+    "TemplateManager",
+    "TEMPLATES",
     "DEFAULT_COMFYUI_SERVER",
 ]
