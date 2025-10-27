@@ -1,0 +1,31 @@
+// ComfyUI Workflow DSL Grammar (v6 - simplified newline handling)
+
+?start: workflow
+
+workflow: (_NL | section)*
+
+section: header (_NL | node)+
+
+header: "##" _WS* STRING _NL
+
+node: NAME _WS* ":" _WS* node_type _NL property*
+
+node_type: TYPE_NAME ("." TYPE_NAME)?
+
+property: "  " NAME _WS* ":" _WS* value _NL
+
+value: NUMBER               -> number_value
+     | BOOLEAN              -> boolean_value
+     | "@" NAME "." NAME    -> connection
+     | NAME                 -> name_value
+     | STRING               -> string_value
+
+// Terminals - order matters!
+TYPE_NAME: /[A-Z][a-zA-Z0-9_]*/
+BOOLEAN: "true" | "false"
+NUMBER: /-?\d+(\.\d+)?/
+NAME: /[a-z_][a-z0-9_]*/
+STRING: /[^\n]+/
+
+_WS: /[ \t]+/
+_NL: /\r?\n/
