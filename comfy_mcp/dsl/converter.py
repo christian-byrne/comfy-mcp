@@ -385,3 +385,49 @@ def full_workflow_to_simplified(full_data: dict[str, Any]) -> dict[str, Any]:
         return convert_nodes_format_to_simplified(nodes, link_map)
     
     return full_data
+
+
+def convert_nodes_format_to_simplified(nodes: list, link_map: dict) -> dict:
+    """Convert node list format to simplified format for DSL conversion."""
+    simplified = {}
+    
+    for node in nodes:
+        node_id = str(node["id"])
+        node_type = node["type"]
+        
+        # Get node inputs/widgets
+        node_data = {"class_type": node_type}
+        
+        # Process inputs (connections and static values)
+        if "inputs" in node:
+            inputs = {}
+            
+            # Handle static widget values  
+            if "widgets_values" in node:
+                widgets = node.get("widgets_values", [])
+                input_names = node.get("inputs", [])
+                
+                # Map widget values to input names
+                for i, widget_value in enumerate(widgets):
+                    if i < len(input_names):
+                        input_name = input_names[i]["name"]
+                        inputs[input_name] = widget_value
+            
+            # Handle connections from links
+            for link_id, link_info in link_map.items():
+                if link_info["target_node_id"] == int(node_id):
+                    # This link connects to this node
+                    source_node_id = str(link_info["source_node_id"])
+                    source_slot = link_info["source_slot"]
+                    target_slot = link_info["target_slot"]
+                    
+                    # Find input name from target slot
+                    if "inputs" in node and target_slot < len(node["inputs"]):
+                        input_name = node["inputs"][target_slot]["name"]
+                        inputs[input_name] = [source_node_id, source_slot]
+            
+            node_data["inputs"] = inputs
+        
+        simplified[node_id] = node_data
+    
+    return simplified

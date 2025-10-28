@@ -1,69 +1,25 @@
 """Template management functionality."""
 
 import re
+import asyncio
 from typing import Dict, List, Optional, Any
 from .templates import TEMPLATES, WorkflowTemplate
+from .official import official_manager, OfficialTemplate
 
 
 class TemplateManager:
     """Manages workflow templates with parameter substitution."""
     
     def __init__(self):
-        self.templates = TEMPLATES
+        self.custom_templates = TEMPLATES
+        self.official_templates_synced = False
     
-    def list_templates(self) -> List[Dict[str, Any]]:
+    def list_templates(self, include_official: bool = True) -> List[Dict[str, Any]]:
         """List all available templates with metadata."""
-        return [
-            {
-                "name": name,
-                "description": template.description,
-                "category": template.category,
-                "tags": template.tags,
-                "difficulty": template.difficulty,
-                "required_models": template.required_models or [],
-                "parameters": template.parameters or {}
-            }
-            for name, template in self.templates.items()
-        ]
-    
-    def get_template(self, name: str) -> Optional[WorkflowTemplate]:
-        """Get a specific template by name."""
-        return self.templates.get(name)
-    
-    def search_templates(
-        self, 
-        query: Optional[str] = None,
-        category: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        difficulty: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Search templates by various criteria."""
         results = []
         
-        for name, template in self.templates.items():
-            # Check query match (name, description, tags)
-            if query:
-                query_lower = query.lower()
-                if not any([
-                    query_lower in name.lower(),
-                    query_lower in template.description.lower(),
-                    any(query_lower in tag.lower() for tag in template.tags)
-                ]):
-                    continue
-            
-            # Check category
-            if category and template.category.lower() != category.lower():
-                continue
-            
-            # Check tags
-            if tags:
-                if not any(tag.lower() in [t.lower() for t in template.tags] for tag in tags):
-                    continue
-            
-            # Check difficulty
-            if difficulty and template.difficulty.lower() != difficulty.lower():
-                continue
-            
+        # Add custom templates
+        for name, template in self.custom_templates.items():
             results.append({
                 "name": name,
                 "description": template.description,
@@ -71,45 +27,159 @@ class TemplateManager:
                 "tags": template.tags,
                 "difficulty": template.difficulty,
                 "required_models": template.required_models or [],
-                "parameters": template.parameters or {}
+                "parameters": template.parameters or {},
+                "source": "custom"
             })
+        
+        # Add official templates if requested
+        if include_official and official_manager.templates:
+            official_templates = official_manager.list_templates()
+            results.extend(official_templates)
+        
+        return results
+    
+    def get_template(self, name: str) -> Optional[WorkflowTemplate]:
+        """Get a specific custom template by name."""
+        return self.custom_templates.get(name)
+    
+    def get_official_template(self, name: str) -> Optional[OfficialTemplate]:
+        """Get a specific official template by name."""
+        return official_manager.get_template(name)
+    
+    async def sync_official_templates(self) -> Dict[str, Any]:
+        """Sync official ComfyUI templates."""
+        try:
+            templates = await official_manager.sync_official_templates()
+            self.official_templates_synced = True
+            return {
+                "status": "success",
+                "synced_count": len(templates),
+                "templates": list(templates.keys())
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def search_templates(
+        self, 
+        query: Optional[str] = None,
+        category: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        difficulty: Optional[str] = None,
+        source: Optional[str] = None,
+        include_official: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Search templates by various criteria."""
+        # Get all templates first
+        all_templates = self.list_templates(include_official=include_official)
+        results = []
+        
+        for template_data in all_templates:
+            # Check source filter
+            if source and template_data.get("source") != source:
+                continue
+                
+            # Check query match (name, description, category)
+            if query:
+                query_lower = query.lower()
+                if not any([
+                    query_lower in template_data["name"].lower(),
+                    query_lower in template_data["description"].lower(),
+                    query_lower in template_data["category"].lower(),
+                ]):
+                    # For custom templates, also check tags
+                    if template_data.get("source") == "custom" and "tags" in template_data:
+                        if not any(query_lower in tag.lower() for tag in template_data["tags"]):
+                            continue
+                    else:
+                        continue
+            
+            # Check category
+            if category and template_data["category"].lower() != category.lower():
+                continue
+            
+            # Check tags (only for custom templates)
+            if tags and template_data.get("source") == "custom":
+                template_tags = template_data.get("tags", [])
+                if not any(tag.lower() in [t.lower() for t in template_tags] for tag in tags):
+                    continue
+            
+            # Check difficulty (only for custom templates)
+            if difficulty and template_data.get("difficulty"):
+                if template_data["difficulty"].lower() != difficulty.lower():
+                    continue
+            
+            results.append(template_data)
         
         return results
     
     def generate_workflow(
         self, 
         template_name: str, 
-        parameters: Optional[Dict[str, str]] = None
+        parameters: Optional[Dict[str, str]] = None,
+        source: str = "auto"
     ) -> Optional[str]:
         """Generate a workflow DSL from template with parameter substitution."""
-        template = self.templates.get(template_name)
-        if not template:
+        # Try custom templates first, then official
+        template = None
+        dsl_content = None
+        
+        if source in ["auto", "custom"]:
+            template = self.custom_templates.get(template_name)
+            if template:
+                dsl_content = template.dsl_content
+        
+        if not template and source in ["auto", "official"]:
+            official_template = official_manager.get_template(template_name)
+            if official_template and official_template.dsl_content:
+                dsl_content = official_template.dsl_content
+                # Create a minimal template-like object for parameter handling
+                template = type('Template', (), {
+                    'parameters': {},  # Official templates don't have default parameters
+                    'dsl_content': dsl_content
+                })()
+        
+        if not template or not dsl_content:
             return None
         
         # Start with template's default parameters
-        final_params = template.parameters.copy() if template.parameters else {}
+        final_params = template.parameters.copy() if hasattr(template, 'parameters') and template.parameters else {}
         
         # Override with provided parameters
         if parameters:
             final_params.update(parameters)
         
-        # Substitute parameters in DSL content
-        dsl_content = template.dsl_content
-        
-        for param_name, param_value in final_params.items():
-            # Replace {param_name} with actual value
-            placeholder = f"{{{param_name}}}"
-            dsl_content = dsl_content.replace(placeholder, str(param_value))
+        # Substitute parameters in DSL content if any
+        if final_params:
+            for param_name, param_value in final_params.items():
+                # Replace {param_name} with actual value
+                placeholder = f"{{{param_name}}}"
+                dsl_content = dsl_content.replace(placeholder, str(param_value))
         
         return dsl_content
     
     def validate_parameters(
         self, 
         template_name: str, 
-        parameters: Dict[str, str]
+        parameters: Dict[str, str],
+        source: str = "auto"
     ) -> Dict[str, List[str]]:
         """Validate parameters for a template."""
-        template = self.templates.get(template_name)
+        # Try to find template in custom or official
+        template = None
+        if source in ["auto", "custom"]:
+            template = self.custom_templates.get(template_name)
+        
+        if not template and source in ["auto", "official"]:
+            official_template = official_manager.get_template(template_name)
+            if official_template and official_template.dsl_content:
+                # Create minimal template object for validation
+                template = type('Template', (), {
+                    'parameters': {},
+                    'dsl_content': official_template.dsl_content
+                })()
         if not template:
             return {
                 "valid": False,
@@ -210,7 +280,7 @@ class TemplateManager:
     
     def get_template_info(self, template_name: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a template."""
-        template = self.templates.get(template_name)
+        template = self.custom_templates.get(template_name)
         if not template:
             return None
         

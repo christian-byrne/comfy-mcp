@@ -113,3 +113,7 @@ models/
 output/
 input/
 custom_nodes/
+
+# Template cache (keep structure but not cached content)
+.template_cache/official_templates_backup_*.json
+.template_cache/official_templates.json

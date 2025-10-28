@@ -1,0 +1,269 @@
+name: Sync Official Templates
+
+on:
+  # Run daily at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      force_sync:
+        description: 'Force complete re-sync of all templates'
+        required: false
+        default: 'false'
+        type: boolean
+  
+  # Run on pushes to main that affect template code
+  push:
+    branches: [main]
+    paths:
+      - 'comfy_mcp/templates/**'
+      - '.github/workflows/sync-templates.yml'
+
+jobs:
+  sync-templates:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+    
+    - name: Create sync script
+      run: |
+        cat > sync_templates.py << 'EOF'
+        #!/usr/bin/env python3
+        """Script to sync official templates via GitHub Actions."""
+        
+        import asyncio
+        import json
+        import os
+        import sys
+        from pathlib import Path
+        from comfy_mcp.templates.official import official_manager
+        from datetime import datetime
+        
+        
+        async def main():
+            print("🚀 Starting official template sync...")
+            
+            force_sync = os.getenv('FORCE_SYNC', 'false').lower() == 'true'
+            
+            try:
+                # Sync templates
+                print("📥 Syncing templates from Comfy-Org/workflow_templates...")
+                templates = await official_manager.sync_official_templates()
+                
+                if not templates:
+                    print("⚠️  No templates synced")
+                    return 1
+                
+                print(f"✅ Successfully synced {len(templates)} templates")
+                
+                # Create sync report
+                report = {
+                    "sync_time": datetime.utcnow().isoformat(),
+                    "template_count": len(templates),
+                    "templates": list(templates.keys()),
+                    "force_sync": force_sync,
+                    "successful_conversions": len([t for t in templates.values() if t.dsl_content]),
+                    "failed_conversions": len([t for t in templates.values() if not t.dsl_content])
+                }
+                
+                # Save report for artifacts
+                report_path = Path("template_sync_report.json")
+                with open(report_path, 'w') as f:
+                    json.dump(report, f, indent=2)
+                
+                print("📊 Sync Report:")
+                print(f"  Templates synced: {report['template_count']}")
+                print(f"  Successful DSL conversions: {report['successful_conversions']}")
+                print(f"  Failed DSL conversions: {report['failed_conversions']}")
+                
+                # Check if we have a cache directory
+                cache_dir = official_manager.cache_dir
+                if cache_dir.exists():
+                    cache_file = cache_dir / "official_templates.json"
+                    if cache_file.exists():
+                        print(f"📁 Cache updated: {cache_file}")
+                        print(f"   Cache size: {cache_file.stat().st_size / 1024:.1f} KB")
+                
+                # Set outputs for GitHub Actions
+                if "GITHUB_OUTPUT" in os.environ:
+                    with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                        f.write(f"template_count={report['template_count']}\n")
+                        f.write(f"successful_conversions={report['successful_conversions']}\n")
+                        f.write(f"failed_conversions={report['failed_conversions']}\n")
+                
+                return 0
+                
+            except Exception as e:
+                print(f"❌ Sync failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return 1
+        
+        
+        if __name__ == "__main__":
+            exit_code = asyncio.run(main())
+            sys.exit(exit_code)
+        EOF
+    
+    - name: Run template sync
+      id: sync
+      env:
+        FORCE_SYNC: ${{ github.event.inputs.force_sync || 'false' }}
+      run: python sync_templates.py
+    
+    - name: Upload sync report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: template-sync-report-${{ github.run_number }}
+        path: template_sync_report.json
+        retention-days: 30
+    
+    - name: Upload template cache
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: template-cache-${{ github.run_number }}
+        path: .template_cache/
+        retention-days: 7
+    
+    - name: Check for changes
+      id: changes
+      run: |
+        if [ -d ".template_cache" ] && [ -f ".template_cache/official_templates.json" ]; then
+          echo "cache_exists=true" >> $GITHUB_OUTPUT
+          echo "📁 Template cache was created/updated"
+        else
+          echo "cache_exists=false" >> $GITHUB_OUTPUT
+          echo "⚠️  No template cache found"
+        fi
+    
+    - name: Commit updated cache
+      if: steps.changes.outputs.cache_exists == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Add cache directory to git if it doesn't exist
+        if [ ! -f ".template_cache/.gitkeep" ]; then
+          mkdir -p .template_cache
+          echo "# Template cache directory" > .template_cache/README.md
+          git add .template_cache/README.md
+        fi
+        
+        # Check if there are actual changes
+        if ! git diff --quiet .template_cache/ || ! git diff --cached --quiet .template_cache/; then
+          git add .template_cache/
+          git commit -m "chore: update official template cache
+          
+          - Synced ${{ steps.sync.outputs.template_count || 'unknown' }} templates
+          - Successful conversions: ${{ steps.sync.outputs.successful_conversions || 'unknown' }}
+          - Failed conversions: ${{ steps.sync.outputs.failed_conversions || 'unknown' }}
+          - Sync time: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          
+          🤖 Automated sync via GitHub Actions"
+          
+          echo "✅ Changes committed"
+        else
+          echo "ℹ️  No changes to commit"
+        fi
+    
+    - name: Push changes
+      if: steps.changes.outputs.cache_exists == 'true'
+      run: |
+        git push || echo "⚠️  Nothing to push or push failed"
+    
+    - name: Create issue on failure
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const title = `Template Sync Failed - ${new Date().toISOString().split('T')[0]}`;
+          const body = `## Template Sync Failure Report
+          
+          The automated template sync workflow failed on ${new Date().toISOString()}.
+          
+          **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          
+          **Trigger:** ${{ github.event_name }}
+          
+          **Details:**
+          - Branch: ${{ github.ref_name }}
+          - Commit: ${{ github.sha }}
+          - Actor: ${{ github.actor }}
+          
+          Please check the workflow logs for detailed error information.
+          
+          ---
+          *This issue was automatically created by the template sync workflow.*`;
+          
+          // Check if similar issue already exists
+          const existingIssues = await github.rest.issues.listForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            labels: ['template-sync', 'automated']
+          });
+          
+          const recentIssue = existingIssues.data.find(issue => 
+            issue.title.includes('Template Sync Failed') && 
+            (Date.now() - new Date(issue.created_at).getTime()) < 24 * 60 * 60 * 1000
+          );
+          
+          if (!recentIssue) {
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['template-sync', 'automated', 'bug']
+            });
+            console.log('Created issue for template sync failure');
+          } else {
+            console.log('Recent template sync failure issue already exists');
+          }
+
+  notify-results:
+    needs: sync-templates
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Download sync report
+      if: needs.sync-templates.result != 'skipped'
+      uses: actions/download-artifact@v4
+      with:
+        name: template-sync-report-${{ github.run_number }}
+    
+    - name: Send success notification
+      if: needs.sync-templates.result == 'success'
+      run: |
+        if [ -f "template_sync_report.json" ]; then
+          echo "✅ Template sync completed successfully!"
+          echo "📊 Report summary:"
+          cat template_sync_report.json | python3 -m json.tool
+        else
+          echo "✅ Template sync completed (no report available)"
+        fi
+    
+    - name: Send failure notification
+      if: needs.sync-templates.result == 'failure'
+      run: |
+        echo "❌ Template sync failed!"
+        echo "Check the workflow logs for details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

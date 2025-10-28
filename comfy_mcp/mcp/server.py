@@ -544,6 +544,116 @@ def validate_template_parameters(
         raise ToolError(f"Error validating parameters: {e}")
 
 
+@mcp.tool  
+async def sync_official_templates(ctx: Context) -> dict:
+    """Sync official ComfyUI templates from GitHub.
+    
+    Downloads and processes official workflow templates from the 
+    Comfy-Org/workflow_templates repository. Converts them to DSL
+    format for use with the template system.
+    
+    Returns:
+        Sync status with count of successfully processed templates
+    
+    Examples:
+        sync_official_templates()
+    """
+    try:
+        await ctx.info("🔄 Starting sync of official ComfyUI templates...")
+        
+        result = await template_manager.sync_official_templates()
+        
+        if result["status"] == "success":
+            await ctx.info(f"✅ Successfully synced {result['synced_count']} official templates")
+        else:
+            await ctx.info(f"❌ Sync failed: {result['error']}")
+        
+        return result
+        
+    except Exception as e:
+        raise ToolError(f"Error syncing official templates: {e}")
+
+
+@mcp.tool
+def list_official_templates() -> list[dict]:
+    """List official ComfyUI templates.
+    
+    Returns templates from the official Comfy-Org repository
+    that have been synced and converted to DSL format.
+    
+    Returns:
+        List of official template metadata
+    
+    Examples:
+        list_official_templates()
+    """
+    try:
+        # Get only official templates
+        results = template_manager.search_templates(source="official")
+        return results
+        
+    except Exception as e:
+        raise ToolError(f"Error listing official templates: {e}")
+
+
+@mcp.tool
+def get_template_dsl(template_name: str, source: str = "auto") -> dict:
+    """Get DSL content for any template (custom or official).
+    
+    Retrieves the DSL representation of a template, which can then
+    be modified or executed directly.
+    
+    Args:
+        template_name: Name of the template
+        source: Template source ("custom", "official", or "auto")
+    
+    Returns:
+        Template DSL content and metadata
+    
+    Examples:
+        get_template_dsl("text2img_basic")
+        get_template_dsl("openai_dalle_3_text_to_image", "official")
+    """
+    try:
+        # Try to get DSL content
+        dsl_content = template_manager.generate_workflow(
+            template_name, 
+            parameters=None,
+            source=source
+        )
+        
+        if dsl_content is None:
+            raise ToolError(f"Template '{template_name}' not found or has no DSL content")
+        
+        # Get template metadata
+        template_info = None
+        if source in ["auto", "custom"]:
+            template_info = template_manager.get_template_info(template_name)
+        
+        if not template_info and source in ["auto", "official"]:
+            official_template = template_manager.get_official_template(template_name)
+            if official_template:
+                template_info = {
+                    "name": template_name,
+                    "display_name": official_template.name,
+                    "description": official_template.description,
+                    "category": official_template.category,
+                    "source": "official",
+                    "source_url": official_template.source_url,
+                    "preview_images": official_template.preview_images or []
+                }
+        
+        return {
+            "template_name": template_name,
+            "dsl_content": dsl_content,
+            "metadata": template_info or {},
+            "source": source
+        }
+        
+    except Exception as e:
+        raise ToolError(f"Error getting template DSL: {e}")
+
+
 # ===== MCP RESOURCES =====
 
 @mcp.resource("comfyui://examples/simple")
